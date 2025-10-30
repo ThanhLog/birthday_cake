@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bánh Sinh Nhật 3D</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Arial', sans-serif;
+      overflow: hidden;
+      background: #000000;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #info {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 15px 30px;
+      border-radius: 10px;
+      font-size: 18px;
+      z-index: 10;
+      backdrop-filter: blur(10px);
+    }
+
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 10;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 90%;
+    }
+
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      background: rgba(255, 255, 255, 0.9);
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    button:hover {
+      background: white;
+      transform: scale(1.05);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #mic-status {
+      position: absolute;
+      top: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #00ff00;
+      font-size: 24px;
+      font-weight: bold;
+      display: none;
+      z-index: 10;
+      text-shadow: 0 0 10px #00ff00;
+    }
+
+    .confetti {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      pointer-events: none;
+      z-index: 5;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- <div id="info">
+    🎂 Bánh Sinh Nhật 3D 🎂<br>
+    <small>Kéo chuột để xoay - Cuộn để zoom<br>
+      Nói "Phì" hoặc "Phù" để thổi nến!</small>
+  </div> -->
+
+  <div id="mic-status">🎤 Đang nghe...</div>
+
+  <div id="canvas-container"></div>
+
+  <div id="controls">
+    <button id="musicBtn" onclick="toggleMusic()">🎵 Phát nhạc</button>
+    <button id="micBtn" onclick="toggleMicrophone()">🎤 Bật micro</button>
+    <button onclick="toggleRotation()">🔄 Tự động xoay</button>
+    <button onclick="resetCandles()">🔥 Đốt lại nến</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    let scene, camera, renderer;
+    let cake, candles = [];
+    let flames = [];
+    let autoRotate = true;
+    let candlesLit = true;
+    let mouseDown = false;
+    let mouseX = 0, mouseY = 0;
+    let targetRotationX = 0, targetRotationY = 0;
+    let currentRotationX = 0, currentRotationY = 0;
+
+    // Audio
+    let audioContext;
+    let audioElement;
+    let musicPlaying = false;
+
+    // Microphone
+    let mediaRecorder;
+    let audioStream;
+    let isListening = false;
+    let recognition;
+
+    function init() {
+      // Scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+
+      // Camera
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 3, 8);
+      camera.lookAt(0, 0, 0);
+
+      // Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      directionalLight.position.set(5, 10, 5);
+      directionalLight.castShadow = true;
+      scene.add(directionalLight);
+
+      const pointLight = new THREE.PointLight(0xffa500, 1, 10);
+      pointLight.position.set(0, 3, 0);
+      scene.add(pointLight);
+
+      // Create cake
+      createCake();
+
+      // Initialize audio
+      initAudio();
+
+      // Event listeners
+      renderer.domElement.addEventListener('mousedown', onMouseDown);
+      renderer.domElement.addEventListener('mousemove', onMouseMove);
+      renderer.domElement.addEventListener('mouseup', onMouseUp);
+      renderer.domElement.addEventListener('wheel', onWheel);
+      window.addEventListener('resize', onWindowResize);
+
+      animate();
+    }
+
+    function initAudio() {
+      // Create audio element for background music
+      audioElement = new Audio();
+      // Sử dụng bài hát sinh nhật mặc định từ URL miễn phí
+      audioElement.src = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+      audioElement.loop = true;
+      audioElement.volume = 0.3;
+    }
+
+    function toggleMusic() {
+      if (!musicPlaying) {
+        audioElement.play().then(() => {
+          musicPlaying = true;
+          document.getElementById('musicBtn').textContent = '🎵 Tắt nhạc';
+        }).catch(err => {
+          console.log('Không thể phát nhạc:', err);
+          alert('Vui lòng click vào trang web để phát nhạc!');
+        });
+      } else {
+        audioElement.pause();
+        musicPlaying = false;
+        document.getElementById('musicBtn').textContent = '🎵 Phát nhạc';
+      }
+    }
+
+    function toggleMicrophone() {
+      if (!isListening) {
+        startListening();
+      } else {
+        stopListening();
+      }
+    }
+
+    function startListening() {
+      // Sử dụng Web Speech API
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'vi-VN';
+
+        recognition.onstart = () => {
+          isListening = true;
+          document.getElementById('micBtn').textContent = '🎤 Tắt micro';
+          document.getElementById('mic-status').style.display = 'block';
+        };
+
+        recognition.onresult = (event) => {
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript.toLowerCase();
+            console.log('Nghe được:', transcript);
+
+            // Kiểm tra các từ "phì", "phù", "phoo", "fù", "fì"
+            if (transcript.includes('phì') ||
+              transcript.includes('phù') ||
+              transcript.includes('phoo') ||
+              transcript.includes('fù') ||
+              transcript.includes('fì') ||
+              transcript.includes('phu') ||
+              transcript.includes('phi')) {
+              blowCandles();
+            }
+          }
+        };
+
+        recognition.onerror = (event) => {
+          console.error('Lỗi nhận diện giọng nói:', event.error);
+        };
+
+        recognition.onend = () => {
+          if (isListening) {
+            recognition.start(); // Tự động khởi động lại
+          }
+        };
+
+        recognition.start();
+      } else {
+        alert('Trình duyệt của bạn không hỗ trợ nhận diện giọng nói!');
+      }
+    }
+
+    function stopListening() {
+      if (recognition) {
+        isListening = false;
+        recognition.stop();
+        document.getElementById('micBtn').textContent = '🎤 Bật micro';
+        document.getElementById('mic-status').style.display = 'none';
+      }
+    }
+
+    function blowCandles() {
+      if (!candlesLit) return;
+
+      candlesLit = false;
+
+      // Tắt nến với hiệu ứng
+      flames.forEach((flame, i) => {
+        setTimeout(() => {
+          flame.visible = false;
+        }, i * 100);
+      });
+
+      // Hiển thị thông báo
+      const status = document.getElementById('mic-status');
+      status.textContent = '🎉 Chúc mừng sinh nhật! 🎉';
+      status.style.color = '#ff00ff';
+
+      setTimeout(() => {
+        status.style.display = 'none';
+        status.textContent = '🎤 Đang nghe...';
+        status.style.color = '#00ff00';
+        if (isListening) status.style.display = 'block';
+      }, 3000);
+
+      // Bắn pháo giấy
+      launchConfetti();
+    }
+
+    function resetCandles() {
+      candlesLit = true;
+      flames.forEach(flame => {
+        flame.visible = true;
+      });
+    }
+
+    function launchConfetti() {
+      const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffa500'];
+      const confettiCount = 150;
+
+      for (let i = 0; i < confettiCount; i++) {
+        setTimeout(() => {
+          const confetti = document.createElement('div');
+          confetti.className = 'confetti';
+          confetti.style.left = Math.random() * window.innerWidth + 'px';
+          confetti.style.top = '-10px';
+          confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+          confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+          document.body.appendChild(confetti);
+
+          const duration = 2000 + Math.random() * 2000;
+          const endX = (Math.random() - 0.5) * 400;
+
+          confetti.animate([
+            { transform: `translate(0, 0) rotate(0deg)`, opacity: 1 },
+            { transform: `translate(${endX}px, ${window.innerHeight}px) rotate(${Math.random() * 720}deg)`, opacity: 0 }
+          ], {
+            duration: duration,
+            easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+          }).onfinish = () => confetti.remove();
+        }, i * 10);
+      }
+    }
+
+    function createCake() {
+      cake = new THREE.Group();
+
+      // Bottom layer
+      const bottomGeometry = new THREE.CylinderGeometry(2, 2, 1, 32);
+      const bottomMaterial = new THREE.MeshPhongMaterial({ color: 0xffb6c1 });
+      const bottomLayer = new THREE.Mesh(bottomGeometry, bottomMaterial);
+      bottomLayer.position.y = 0.5;
+      bottomLayer.castShadow = true;
+      cake.add(bottomLayer);
+
+      // Frosting bottom
+      const frostingBottomGeometry = new THREE.CylinderGeometry(2.1, 2.1, 0.2, 32);
+      const frostingMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff });
+      const frostingBottom = new THREE.Mesh(frostingBottomGeometry, frostingMaterial);
+      frostingBottom.position.y = 1.1;
+      cake.add(frostingBottom);
+
+      // Middle layer
+      const middleGeometry = new THREE.CylinderGeometry(1.5, 1.5, 1, 32);
+      const middleMaterial = new THREE.MeshPhongMaterial({ color: 0xffd700 });
+      const middleLayer = new THREE.Mesh(middleGeometry, middleMaterial);
+      middleLayer.position.y = 1.7;
+      middleLayer.castShadow = true;
+      cake.add(middleLayer);
+
+      // Frosting middle
+      const frostingMiddleGeometry = new THREE.CylinderGeometry(1.6, 1.6, 0.2, 32);
+      const frostingMiddle = new THREE.Mesh(frostingMiddleGeometry, frostingMaterial);
+      frostingMiddle.position.y = 2.3;
+      cake.add(frostingMiddle);
+
+      // Top layer
+      const topGeometry = new THREE.CylinderGeometry(1, 1, 0.8, 32);
+      const topMaterial = new THREE.MeshPhongMaterial({ color: 0xff69b4 });
+      const topLayer = new THREE.Mesh(topGeometry, topMaterial);
+      topLayer.position.y = 2.8;
+      topLayer.castShadow = true;
+      cake.add(topLayer);
+
+      // Decorative cherries
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const cherryGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const cherryMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+        const cherry = new THREE.Mesh(cherryGeometry, cherryMaterial);
+        cherry.position.set(
+          Math.cos(angle) * 0.8,
+          3.2,
+          Math.sin(angle) * 0.8
+        );
+        cake.add(cherry);
+      }
+
+      // Candles
+      createCandles();
+
+      scene.add(cake);
+    }
+
+    function createCandles() {
+      const candlePositions = [
+        { x: 0, z: 0 },
+        { x: 0.5, z: 0 },
+        { x: -0.5, z: 0 },
+        { x: 0, z: 0.5 },
+        { x: 0, z: -0.5 }
+      ];
+
+      candlePositions.forEach(pos => {
+        const candleGroup = new THREE.Group();
+
+        // Candle stick
+        const candleGeometry = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 16);
+        const candleMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff });
+        const candle = new THREE.Mesh(candleGeometry, candleMaterial);
+        candle.position.y = 3.5;
+        candleGroup.add(candle);
+
+        // Flame
+        const flameGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const flameMaterial = new THREE.MeshBasicMaterial({
+          color: 0xffa500,
+          transparent: true,
+          opacity: 0.9
+        });
+        const flame = new THREE.Mesh(flameGeometry, flameMaterial);
+        flame.position.y = 3.85;
+        flame.scale.y = 1.5;
+        candleGroup.add(flame);
+        flames.push(flame);
+
+        candleGroup.position.set(pos.x, 0, pos.z);
+        candles.push(candleGroup);
+        cake.add(candleGroup);
+      });
+    }
+
+    function toggleRotation() {
+      autoRotate = !autoRotate;
+    }
+
+    function onMouseDown(e) {
+      mouseDown = true;
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+    }
+
+    function onMouseMove(e) {
+      if (mouseDown) {
+        const deltaX = e.clientX - mouseX;
+        const deltaY = e.clientY - mouseY;
+
+        targetRotationY += deltaX * 0.01;
+        targetRotationX += deltaY * 0.01;
+
+        targetRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationX));
+
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+
+        autoRotate = false;
+      }
+    }
+
+    function onMouseUp() {
+      mouseDown = false;
+    }
+
+    function onWheel(e) {
+      e.preventDefault();
+      camera.position.z += e.deltaY * 0.01;
+      camera.position.z = Math.max(4, Math.min(15, camera.position.z));
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // Animate flames
+      flames.forEach((flame, i) => {
+        if (candlesLit && flame.visible) {
+          const time = Date.now() * 0.01;
+          flame.scale.y = 1.5 + Math.sin(time + i) * 0.2;
+          flame.material.opacity = 0.8 + Math.sin(time + i) * 0.1;
+        }
+      });
+
+      // Rotation
+      if (autoRotate) {
+        cake.rotation.y += 0.005;
+      } else {
+        currentRotationY += (targetRotationY - currentRotationY) * 0.1;
+        currentRotationX += (targetRotationX - currentRotationX) * 0.1;
+
+        cake.rotation.y = currentRotationY;
+        cake.rotation.x = currentRotationX;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    init();
+  </script>
+</body>
+
+</html>
